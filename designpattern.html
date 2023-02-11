@@ -1,0 +1,193 @@
+
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CodeSpitz 3 - 4 - 5</title>
+<style>
+  #a ul{padding:10px}
+  #a li{list-style: none}
+  .urgent{color:red}
+  .high{color:orange}
+  .normal{color:skyblue}
+  .low{color:grey}
+  .remove{color:red;font-size:11px;cursor:pointer}
+  .member{background:#edeeed;text-decoration: none;color:#444}
+</style>
+</head>
+<body>
+  <section id="a"></section>
+<script>
+const el = (tag, attr={})=>Object.entries(attr).reduce((el, v)=>{
+	typeof el[v[0]] == 'function' ? el[v[0]](v[1]) : (el[v[0]] = v[1]);
+	return el;
+}, document.createElement(tag));
+const Task = class{
+	constructor(title, date){
+		this._title = title, this._date = date, this._isComplete = false;
+		this._list = [];
+	}
+	isComplete(){return this._isComplete;}
+	toggle(){this._isComplete = !this._isComplete;}
+	add(title, date = null){
+    const task = new Task(title, date);
+    this._list.push(task);
+    return task;
+  }
+	remove(task){
+		const list = this._list;
+		if(list.includes(task)) list.splice(list.indexOf(task), 1);
+	}
+	byTitle(stateGroup = true){return this.list('title', stateGroup);}
+	byDate(stateGroup = true){return this.list('date', stateGroup);}
+	list(sort, stateGroup = true){
+		const list = this._list, f = (a, b)=>a[sort] > b[sort];
+		const map = task=>task.list(sort, stateGroup);
+		return {
+			task:this,
+      update(){return this.task.list(sort, stateGroup);},
+			list:!stateGroup ? [...list].sort(f).map(map) : [
+				...list.filter(v=>!v.isComplete()).sort(f).map(map),
+				...list.filter(v=>v.isComplete()).sort(f).map(map)
+			]
+		}; 
+	}
+};
+const Renderer = class{
+	constructor(processor){
+		this.p = processor;
+		processor.addObserver(this);
+	}
+	observe(type){ type == 'rerender' && this.rerender();}
+	rerender(){
+		 this.oldList && this.render(this.oldList.update());
+	}
+	render(list){
+		this.oldList = list;
+    this.p.folder(list.task);
+		this.p.parent(list.task);
+		this.subTask(list.list);
+	}
+  subTask(list){
+		list.forEach(({task, list})=>{
+			this.p.task(task);
+			if(list.length){
+				this.p.parent(task);
+				this.subTask(list);
+			}
+		});
+	}
+};
+const TaskView = class{
+	addObserver(v){
+    this.observer = v;
+  }
+	notify(msg){
+    this.observer && this.observer.observe(msg);
+  }
+	set(tv){this._tv = tv; return this;}
+	task(parent, task){
+		this.result = task._title;
+    if(this._tv){
+      this.result = this._tv.task(parent, task);
+      this._tv.addObserver(this.observer);
+    }
+		return this._task(parent, task); 
+	}
+	_task(parent, task){throw "override!"}
+};
+TaskView.base = new (class extends TaskView{
+  constructor(){super();}
+	_task(parent, task){return this.result;}
+});
+TaskView.Priority = class extends TaskView{
+  constructor(){super();}
+	_task(parent, task){return this.result.replace(/\[(urgent|high|normal|low)\]/gi, '<span class="$1">■</span>');}
+};
+TaskView.Member = class extends TaskView{
+	constructor(...members){
+    super();
+		this._reg = new RegExp(`@(${members.join('|')})`, 'g');
+ 	}
+	_task(task, parent, prev){return this.result.replace(this._reg, '<a class="member" href="#$1">$1</a>');}	
+};
+TaskView.Remove = class extends TaskView{
+  constructor(){super();}
+	_task(parent, task){
+		const id = TaskView.Remove.id++;
+		TaskView.Remove[id] =_=>{
+			delete TaskView.Remove[id];
+			parent.remove(task);
+			this.notify('rerender');
+		};
+		return this.result + ` <a class="remove" onclick="TaskView.Remove[${id}]()">X</a>`;
+	}
+};
+TaskView.Remove.id = 0;
+  
+Renderer.Processor = class{
+	constructor(){
+		this.prop = Object.create(null);
+		this._tv = TaskView.base;
+	}
+  taskView(...tv){tv.forEach(tv=>this._tv = tv.set(this._tv));}
+  
+	observe(msg){this.notify(msg);}
+	addObserver(v){this.observer = v;}
+	notify(msg){this.observer && this.observer.observe(msg);}
+	
+	folder(task){throw 'override';}
+	task(task){throw 'override';}
+	parent(task){throw 'override';}
+	taskRender(task){
+		this._tv.addObserver(this);
+		return this._tv.task(this.prop.ptask, task);
+	}
+};
+Renderer.Processor.Dom = class extends Renderer.Processor{
+	constructor(parent){
+		super();
+		this._p = parent; 
+	}
+	folder({_title}){
+		const parent = document.querySelector(this._p);
+		parent.innerHTML = '';
+		parent.appendChild(el('h1', {innerHTML:_title}));
+		this.prop.parent = parent; 	
+	}
+	task(task){
+		const li = el('li',{innerHTML:this.taskRender(task)});
+		this.prop.parent.appendChild(li);
+		this.prop.parent = li; 
+	}
+	parent(task){
+		const ul = el('ul');
+		this.prop.parent.appendChild(ul);
+		this.prop.parent = ul;
+		this.prop.ptask = task;
+	}
+};
+  
+const folder = new Task('s3-4');
+folder.add("[urgent] 2강교안작성");
+folder.add("[high] 3강교안작성 @hika, @summer");
+const {list} = folder.list('title');
+list[1].task.add('[normal] ppt정리');
+list[1].task.add('[low] 코드정리');
+const {list:sublist} = list[1].task.list('title');
+sublist[1].task.add('슬라이드마스터 정리 @summer');
+sublist[1].task.add('디자인개선 @summer, @hika');
+
+const dom = new Renderer.Processor.Dom('#a');
+dom.taskView(
+  new TaskView.Remove(), 
+  new TaskView.Member('hika', 'summer'), 
+  new TaskView.Priority()
+);
+const renderer = new Renderer(dom);
+renderer.render(folder.list('title'));
+
+</script>
+</body>
+</html>
+
