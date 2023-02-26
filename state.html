@@ -1,11 +1,52 @@
 <html><head></head><body>
     <section id="todo"></section>
     <script>
-
-        // Task의 리스너 TaskList
-        // TaskList의 리스너 Renderer
-        // notify가 일어나면   Task -> TaskList-> Renderer까지  listen()이 체이닝 호출 ->  최종적으로  Renderer의 render() 가 호출되어 다시 그림
-
+    const TaskState = class {
+      static addState(key, cls) {
+        const v = new cls();
+        if (!(v instanceof TaskState)) throw 'invalid cls';
+        if ((TaskState._subClasses || (TaskState._subClasses = new Map())).has(key)) throw 'exist key';
+        TaskState._subClasses.set(key, cls);        
+      }
+      static getState(type) {
+        return new (TaskState._subClasses.get(type));
+      }
+      
+      isComplete() {
+        throw 'must be overrided';
+      }
+      get order() {
+        throw 'must be overrided';
+      }
+      stateList() {
+        return Array.from(TaskState._subClasses.keys());        
+      }
+      [Symbol.toPrimitive](hint) {
+        for(const [k, cls] of TaskState._subClasses) {
+          if (this instanceof cls) return k;
+        }
+      }
+    };
+    TaskState.addState('waiting', class extends TaskState {
+      isComplete() { return false; }
+      get order() { return 1; }
+    });    
+    TaskState.addState('working', class extends TaskState {
+      isComplete() { return false; }
+      get order() { return 2; }
+    });
+    TaskState.addState('closed', class extends TaskState {
+      isComplete() { return true; }
+      get order() { return 3; }
+    });
+    TaskState.addState('canceled', class extends TaskState {
+      isComplete() { return true; }
+      get order() { return 4; }
+    });
+    TaskState.addState('resolved', class extends TaskState {
+      isComplete() { return true; }
+      get order() { return 5; }
+    });
     const Listener = class {
       listen(type) {
         throw 'must be overrided';
@@ -13,7 +54,7 @@
     };
     const Task = class extends Listener {
       constructor() {
-        super();  // 상속 받으면 무조건 호출 ,  최근 버전에서는 없어진듯
+        super();
         this._list = [];
         this._listener = new Set();
       }
@@ -22,7 +63,7 @@
       }
       addListener(listener) {
         this._listener.add(listener);
-        return this;  // chainning 하기 위해서 
+        return this;
       }
       removeListener(listener) {
         this._listener.delete(listener);
@@ -31,16 +72,14 @@
         this._notify(type);
       }
       add(task) {
-        // 자식을 추가할 때  해당 자식의 옵져보를 리스트 자신을 지정함.
-        // task를 수신하고 있어야 자식의 문제를 수신 받음
-        this._list.push(task.addListener(this));   // addListener method는 자신의 옵저버로 현재객체지정후   chainning에 의해서 task return
-        this._notify('added'); 
+        this._list.push(task.addListener(this));
+        this._notify('added');
       }
       remove(task) {
         const l = this._list;
         if (l.includes(task)) l.splice(l.indexOf(task), 1);
-        task.removeListener(this);  // 자식의 수신자인 자신을 빼내야됨
-        this._notify('removed');   
+        task.removeListener(this);
+        this._notify('removed');
       }
       getResult(sort, state) {
         const l = this._list;
@@ -56,6 +95,9 @@
         };
       }
       _getResult() { throw 'must be overrided'; }
+
+      save() {return JSON.stringify(this)}
+      retore(data) { const v = typeof data === 'string'? JSON.parse(data): data}
     };
     const TaskItem = class extends Task {
       static title(a, b) {
@@ -67,12 +109,24 @@
       static register(a, b) {
         return null;
       }
+      static state(a, b) {
+        return a.sortState(b);
+      }
       constructor(title) {
         super();
     
           this._title = title;
           this._date = new Date();
-          this._isComplete = false;
+        this._state = TaskState.getState('waiting');        
+      }
+      toJSON() {
+        return `{
+            "type":"item",
+            "title": "${this._title}",
+            "date": "${this._date.toISOString()}",
+            "state": "${this._state + ''}",
+            "list": [${this._list.map(v=> v.toJSON()).join(',')}]
+        }`
       }
       get date() { 
         return this._date.toISOString(); // toJSON
@@ -80,21 +134,27 @@
       get title() { 
         return this._title;
       }
+      get state() {
+        return this._state;
+      }
       _getResult(sort, state) {
         return this;
       }
       isComplete() {
-          return this._isComplete;
+          return this._state.isComplete();          
       }
-      toggle() {
-          this._isComplete = !this._isComplete;
-        this._notify('toggle');
+      setState(type) {
+        this._state = TaskState.getState(type);
+        this._notify('state');
       }
       sortTitle(task) {
           return this._title > task._title;
       }
       sortDate(task) {
           return this._date > task._date;
+      }
+      sortState(task) {
+        return this._state.order > task._state.order;
       }
     };
     const TaskList = class extends Task {
@@ -104,18 +164,24 @@
           this._title = title;
         this._sort = 'register';
       }
+
+      toJSON() {
+        return `{
+            "type":"item",
+            "title": "${this._title}",
+            "date": "${this._date.toISOString()}",
+            "state": "${this._state + ''}",
+            "list": [${this._list.map(v=> v.toJSON()).join(',')}]
+        }`
+      }
       get title() { return this._title; }
       get sort() { 
         return this._sort; 
       }
       set sort(v) { 
         this._sort = v; 
-        this._notify('sort'); // render() 대신 Renderer에 listen 호출하여  render() 를 진행함
+        this._notify('sort');
       }
-      // taskItem, TaskList 의 add 는 부모에서 통합처리
-    //   add(title) {
-    //     super.add(new TaskItem(title));
-    //   }
       _getResult(sort, state) {
           return this._title;
       }
@@ -146,28 +212,14 @@
       sort(s) {
         this._list.sort = s;
       }
-    //   add(title) {
-    //     this._list.add(title);
-    //      // render() 대신 Task에서 notify호출하여 리스트의 옵져버인 Renderer에 listen 호출하여  render() 를 진행함
-    //     //  this.render()
-    //   }
       remove(parent, taskItem) {
         parent.remove(taskItem);
-        // this._list.remove(taskItem);
-        // render() 대신 Task에서 notify호출하여 리스트의 옵져버인 Renderer에 listen 호출하여  render() 를 진행함
-
       }
-      toggle(taskItem) {
-        taskItem.toggle(); // !!
-        // render() 대신 TaskItem.toggle()에서 notify호출하여 리스트의 옵져버인 Renderer에 listen 호출하여  render() 를 진행함
-        //  this.render()
-
+      setState(taskItem, type) {
+        taskItem.setState(type);
       }
       add(task, title) {
-       // render() 대신 Task에서 notify호출하여 리스트의 옵져버인 Renderer에 listen 호출하여  render() 를 진행함
-        // taskItem.add(new TaskItem(title));
         task.add(new TaskItem(title));
-        //  this.render()
       }
       render() { // throw
         const parent = document.querySelector(this._parent);
@@ -194,7 +246,7 @@
         }
         this._startSub();
         task.getResult(s, state).children.forEach(
-          ({ item }) => this.render(item, s, state, this)
+          ({ item }) => this.render(item, s, state, task)
         );
         this._endSub();
       }
@@ -225,9 +277,14 @@
             '@textDecoration', taskItem.isComplete() ? 'line-though' : 'none'
           ),
           Dr.el('time', 'innerHTML', taskItem.date, 'dateTime', taskItem.date),
-          Dr.el('button', 'innerHTML', taskItem.isComplete() ? 'progress' : 'complete',
+          taskItem.state.stateList().reduce((select, v) => {
+            select.appendChild(Dr.el('option', 'value', v, 'innerHTML', v, 
+              'selected', taskItem.state + '' == v ? true : false));
+            return select;
+          }, Dr.el('select')),
+          Dr.el('button', 'innerHTML', 'change',
             'addEventListener', [
-            'click', e => r.toggle(taskItem)
+            'click', e => r.setState(taskItem, e.target.previousSibling.value)
           ]),
           Dr.el('button', 'innerHTML', 'remove',
             'addEventListener', [
