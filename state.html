@@ -186,6 +186,27 @@
           return this._title;
       }
     };
+    const TaskCommander = class {
+      // undo 
+      // redo
+      constructor(task, method, ...param) {
+        this._task =task
+        this._method = method 
+        this._param = param
+        this._undo = null
+      }
+      call() {
+        this._undo = this.task.save()
+        this._task[this.method](...this._param)        
+      }
+      set() {
+        this._undo= this._task.save()
+        this._task[this.method] = this._param[0]
+      }
+      rollback()  {
+        this._task.restore(this._undo)
+      }
+    }
     const Dr = class extends Listener {
       static el(type, ...attr) {
         const el = document.createElement(type);
@@ -205,21 +226,35 @@
         this._list = taskList;
         this._parent = parent;
         this._list.addListener(this);
+        this._commands = []
       }
       listen(type) {
         this.render();
       }
       sort(s) {
-        this._list.sort = s;
+        // this._list.sort = s;
+        this._cmd( new TaskCommander(this._list, 'sort', s)).set()
+      }
+      _cmd(cmd) {
+        this._commands.push(cmd)
+        return cmd
       }
       remove(parent, taskItem) {
-        parent.remove(taskItem);
+        // this._commands.push(new TaskCommander())
+        this._cmd( new TaskCommander(parent, 'remove', taskItem)).call()
+        // parent.remove(taskItem);
       }
       setState(taskItem, type) {
-        taskItem.setState(type);
+        // taskItem.setState(type);
+        this._cmd( new TaskCommander(taskItem, 'setState',type)).call()
       }
       add(task, title) {
-        task.add(new TaskItem(title));
+        this._cmd( new TaskCommander(task, 'add', new TaskItem(title))).call()
+        // task.add(new TaskItem(title));
+      }
+      undo(){
+        if(!this._commands.length) return
+        this._commands.pop().rollback()
       }
       render() { // throw
         const parent = document.querySelector(this._parent);
